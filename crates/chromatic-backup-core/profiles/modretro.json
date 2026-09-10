@@ -1,0 +1,159 @@
+{
+  "type": "DMG",
+  "names": [
+    "ModRetro Chromatic Cartridge with 39VF1681",
+    "ModRetro Chromatic Cartridge with 39VF1682"
+  ],
+  "flash_ids": [
+    [
+      191,
+      200
+    ],
+    [
+      191,
+      201
+    ]
+  ],
+  "flash_size": 2097152,
+  "voltage": 3.3,
+  "voltage_variants": true,
+  "start_addr": 0,
+  "first_bank": 1,
+  "write_pin": "WR",
+  "chip_erase_timeout": 30,
+  "command_set": "AMD",
+  "commands": {
+    "reset": [
+      [
+        0,
+        240
+      ]
+    ],
+    "read_identifier": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        144
+      ]
+    ],
+    "read_cfi": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        152
+      ]
+    ],
+    "chip_erase": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        128
+      ],
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        16
+      ]
+    ],
+    "chip_erase_wait_for": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        0,
+        65535,
+        65535
+      ]
+    ],
+    "single_write": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        160
+      ],
+      [
+        "PA",
+        "PD"
+      ]
+    ],
+    "single_write_wait_for": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ]
+    ]
+  }
+}

@@ -1,0 +1,107 @@
+name: Windows app, updater, and flashing tools
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tools:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Build portable Windows flashing tools
+        run: python3 flutter/tool/package_windows_tools.py --engine docker --output flutter/.dart_tool/windows-tools
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows-flashing-tools
+          path: |
+            flutter/.dart_tool/windows-tools/
+            flutter/.dart_tool/ChroMagician-windows-tools-sources.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+  windows:
+    needs: tools
+    runs-on: windows-2022
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: flutter
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: windows-flashing-tools
+          path: flutter/.dart_tool
+      - name: Dependencies and analysis
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          flutter analyze
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Windows archive and update UI checks
+        run: |
+          flutter test --concurrency=2 test/windows_app_update_test.dart test/update_ui_test.dart test/releases_test.dart test/firmware_dialog_test.dart test/firmware_setup_test.dart test/firmware_test.dart test/auto_read_test.dart test/backend_test.dart
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Native firmware probe checks
+        working-directory: .
+        run: cargo test --workspace --locked
+      - name: Real Windows replacement and rollback
+        run: |
+          . ./tool/windows/enable_msvc.ps1
+          New-Item -ItemType Directory -Force .dart_tool/windows-update | Out-Null
+          dart compile exe tool/app_update_helper.dart -o .dart_tool/windows-update/chromagician-update.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dart compile exe test/support/windows_update_fixture.dart -o .dart_tool/windows-update/fixture.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cl /nologo /LD test/support/windows_update_lock.c /Fe:.dart_tool/windows-update/locked.dll /Fo:.dart_tool/windows-update/locked.obj /link /IMPLIB:.dart_tool/windows-update/locked.lib
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dart run test/windows_update_integration.dart .dart_tool/windows-update/chromagician-update.exe .dart_tool/windows-update/fixture.exe .dart_tool/windows-update/locked.dll
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build the Windows app and native helper
+        run: |
+          . ./tool/windows/enable_msvc.ps1
+          dart run tool/build_desktop.dart --firmware-dir .dart_tool/windows-tools
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $bundle = 'build/windows/x64/runner/Release'
+          $crt = Join-Path $env:VCToolsRedistDir 'x64/Microsoft.VC143.CRT'
+          foreach ($dll in @('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')) {
+            Copy-Item (Join-Path $crt $dll) $bundle
+          }
+          Copy-Item ../LICENSE $bundle
+          dart run tool/package_windows_app.dart $bundle build/windows-package
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Validate packaged flashing tools without developer runtimes
+        run: |
+          Invoke-WebRequest 'https://github.com/ModRetro/oss-chromatic-console-mcu/releases/download/v4.2/v0.13.4.bin' -OutFile .dart_tool/stock-mcu.bin
+          $env:CHROMAGIC_TEST_STOCK_MCU = (Resolve-Path .dart_tool/stock-mcu.bin).Path
+          $env:CHROMAGIC_TEST_WINDOWS_ZIP = (Get-ChildItem build/windows-package/*.zip).FullName
+          flutter test test/windows_packaged_tools_test.dart
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Copy-Item .dart_tool/ChroMagician-windows-tools-sources.tar.gz build/windows-package/
+          $source = Get-Item build/windows-package/ChroMagician-windows-tools-sources.tar.gz
+          $hash = (Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText("$($source.FullName).sha256", "$hash  $($source.Name)`n")
+      - name: Install the packaged Flutter app
+        run: |
+          $zip = (Get-ChildItem build/windows-package/*.zip).FullName
+          dart run test/windows_update_integration.dart build/windows/x64/runner/Release/libexec/chromagician-update.exe .dart_tool/windows-update/fixture.exe .dart_tool/windows-update/locked.dll $zip --flutter-only
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build and test the Windows installer
+        run: |
+          ./tool/windows/build_installer.ps1 -Bundle build/windows/x64/runner/Release -Output build/windows-package
+          $setup = (Get-ChildItem build/windows-package/*-Setup.exe).FullName
+          $zip = (Get-ChildItem build/windows-package/*.zip).FullName
+          ./test/windows_installer_test.ps1 -Setup $setup -Archive $zip
+      - name: Save tested Windows artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows-complete-tested
+          path: flutter/build/windows-package/*
+          retention-days: 14
+          if-no-files-found: error

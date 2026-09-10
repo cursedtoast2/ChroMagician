@@ -1,0 +1,265 @@
+{
+  "type": "DMG",
+  "names": [
+    "insideGadgets 4 MiB (S29GL032M)",
+    "ModRetro Chromatic Cartridge with IS29GL032"
+  ],
+  "flash_ids": [
+    [
+      1,
+      1,
+      126,
+      126
+    ],
+    [
+      157,
+      157,
+      126,
+      126
+    ]
+  ],
+  "voltage": 5,
+  "flash_size": 4194304,
+  "start_addr": 16384,
+  "first_bank": 0,
+  "write_pin": "WR",
+  "sector_size_from_cfi": true,
+  "chip_erase_timeout": 60,
+  "command_set": "AMD",
+  "commands": {
+    "reset": [
+      [
+        0,
+        240
+      ]
+    ],
+    "read_identifier": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        144
+      ]
+    ],
+    "chip_erase": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        128
+      ],
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        16
+      ]
+    ],
+    "chip_erase_wait_for": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        0,
+        255,
+        255
+      ]
+    ],
+    "sector_erase": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        128
+      ],
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        "SA",
+        48
+      ]
+    ],
+    "sector_erase_wait_for": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        "SA",
+        255,
+        255
+      ]
+    ],
+    "buffer_write": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        "SA",
+        37
+      ],
+      [
+        "SA",
+        "BS"
+      ],
+      [
+        "PA",
+        "PD"
+      ],
+      [
+        "SA",
+        41
+      ]
+    ],
+    "buffer_write_wait_for": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        "SA",
+        "PD",
+        65535
+      ]
+    ],
+    "single_write": [
+      [
+        2730,
+        170
+      ],
+      [
+        1365,
+        85
+      ],
+      [
+        2730,
+        160
+      ],
+      [
+        "PA",
+        "PD"
+      ]
+    ],
+    "single_write_wait_for": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ]
+    ]
+  }
+}

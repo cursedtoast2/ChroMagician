@@ -1,0 +1,7 @@
+FROM docker.io/library/ubuntu@sha256:2edbbc5dc405e9612ba3584ce95480277e3eb374407b5505fe26f17df77c7dbc
+ENV DEBIAN_FRONTEND=noninteractive CMAKE_BUILD_PARALLEL_LEVEL=2
+RUN sed -i '/^deb /{p;s/^deb /deb-src /;}' /etc/apt/sources.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates python3 python3-pip cmake make g++ pkg-config patchelf binutils \
+      libusb-1.0-0-dev libftdi1-dev libudev-dev libhidapi-dev libgpiod-dev zlib1g-dev && \
+    python3 -m pip install --no-cache-dir pyinstaller==6.16.0

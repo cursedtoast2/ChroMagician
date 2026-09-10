@@ -1,0 +1,17 @@
+{
+  "esptool": {
+    "version": "4.12.0",
+    "url": "https://github.com/espressif/esptool/releases/download/v4.12.0/esptool-v4.12.0-linux-amd64.tar.gz",
+    "sha256": "fd92bfde850baa20c4090457b317c767df22878600a567237b092f9b151a5161"
+  },
+  "esptool_source": {
+    "url": "https://codeload.github.com/espressif/esptool/tar.gz/refs/tags/v4.12.0",
+    "sha256": "0d099edae2d76edfeaed1b3c6699c278e168809e30845311431a0a812888ca83"
+  },
+  "openFPGALoader": {
+    "version": "1.1.1",
+    "revision": "c3a1232f8730dbde42453ab96d0275b29a384271",
+    "url": "https://codeload.github.com/trabucayre/openFPGALoader/tar.gz/c3a1232f8730dbde42453ab96d0275b29a384271",
+    "sha256": "cb697746deb32b24fd3253331296d4659c7a7f377bbecc92acb3904942e08c4b"
+  }
+}

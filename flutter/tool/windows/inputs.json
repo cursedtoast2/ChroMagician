@@ -1,0 +1,12 @@
+{
+  "esptool": {
+    "version": "4.12.0",
+    "url": "https://github.com/espressif/esptool/releases/download/v4.12.0/esptool-v4.12.0-windows-amd64.zip",
+    "sha256": "42fddc5e6a05716868ad77fb43acbf53be041f97abed87ff850df1dc88140889"
+  },
+  "libusb": {
+    "version": "1.0.27",
+    "url": "https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2",
+    "sha256": "ffaa41d741a8a3bee244ac8e54a72ea05bf2879663c098c82fc5757853441575"
+  }
+}

@@ -1,0 +1,31 @@
+name: chromatic_pc_backup
+description: "Desktop cartridge tools for Chromatic PC Backup mode"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  archive: ^4.2.0
+  crypto: ^3.0.7
+  ffi: ^2.2.0
+  file_selector: ^1.1.0
+  flutter:
+    sdk: flutter
+  package_info_plus: ^10.2.1
+  path: ^1.9.1
+  path_provider: ^2.1.6
+  pub_semver: ^2.2.1
+  url_launcher: ^6.3.2
+  window_manager: ^0.5.2
+  win32: ^6.4.0
+
+dev_dependencies:
+  file_selector_platform_interface: ^2.7.0
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

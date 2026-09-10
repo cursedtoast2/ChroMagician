@@ -1,0 +1,14 @@
+The cartridge programming profiles are derived from FlashGBX by Lesserkuma
+and distributed under GPL-3.0 (see LICENSE).
+
+modretro.json: fc_DMG_39VF1681.txt at commit
+0272d8ef039b2e131a7278c1a3b6dd4ade5a7ecd
+https://github.com/Lesserkuma/FlashGBX/blob/0272d8ef039b2e131a7278c1a3b6dd4ade5a7ecd/FlashGBX/config/fc_DMG_39VF1681.txt
+
+modretro-is29gl032.json: fc_DMG_iG_4MB.txt at commit
+d280bc06d3134b583c685f82f0e38849b2ba8cc9
+https://github.com/Lesserkuma/FlashGBX/blob/d280bc06d3134b583c685f82f0e38849b2ba8cc9/FlashGBX/config/fc_DMG_iG_4MB.txt
+
+The application icon adapts ModRetro's Chromatic character from
+oss-chromatic-console-mcu, with the ChroMagic magician hat and wand.
+https://github.com/ModRetro/oss-chromatic-console-mcu

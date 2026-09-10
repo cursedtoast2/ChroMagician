@@ -1,0 +1,43 @@
+name: Linux installers and native updates
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      CHROMAGIC_CONTAINER_ENGINE: docker
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: '3.44.6'
+          channel: stable
+          cache: true
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libudev-dev
+      - name: Prepare release build directory
+        run: |
+          mkdir -p /tmp/chromagician-build
+          git archive HEAD | tar -x -C /tmp/chromagician-build
+      - name: Build complete Linux app
+        working-directory: /tmp/chromagician-build/flutter
+        run: |
+          flutter pub get
+          dart run tool/build_desktop.dart --catalog-url https://chromagic.org
+      - name: Package and test native installers
+        working-directory: /tmp/chromagician-build/flutter
+        run: python3 tool/package_linux_app.py
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: linux-installer-results
+          path: |
+            /tmp/chromagician-build/flutter/build/linux-package/*.deb
+            /tmp/chromagician-build/flutter/build/linux-package/*.rpm
+            /tmp/chromagician-build/flutter/build/linux-package/*.tar.gz
+            /tmp/chromagician-build/flutter/build/linux-package/*.sha256
+          retention-days: 14
+          if-no-files-found: error

@@ -1,0 +1,7 @@
+target/
+.env*
+*.gb
+*.gbc
+*.sav
+*.rtc
+catalog/
