@@ -1022,7 +1022,10 @@ class _WorkspaceState extends State<Workspace> {
           controller: c,
           releases: widget.updates == null
               ? null
-              : FirmwareReleases(widget.updates!.client),
+              : FirmwareReleases(
+                  widget.updates!.client,
+                  firmware: widget.updates!.firmware,
+                ),
         ),
       );
     } on Object catch (error) {

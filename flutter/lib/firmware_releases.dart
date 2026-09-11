@@ -7,8 +7,44 @@ import 'firmware.dart';
 import 'releases.dart';
 
 class FirmwareReleases {
-  FirmwareReleases(this.client);
+  FirmwareReleases(this.client, {GitHubRelease? firmware}) {
+    if (firmware != null) {
+      _releases[firmwareRepository] = firmware;
+    }
+  }
   final ReleaseClient client;
+  final _releases = <String, GitHubRelease>{};
+
+  Future<GitHubRelease?> _latest(
+    String repository, {
+    bool prereleases = true,
+  }) => _releases.containsKey(repository)
+      ? Future.value(_releases[repository])
+      : client.latest(repository, prereleases: prereleases, allowCached: true);
+
+  Future<FirmwareRelease> describe(String id) async {
+    if (id != 'chromagician' && id != 'stock') {
+      throw const ReleaseFailure('Unknown firmware.');
+    }
+    final stock = id == 'stock';
+    final release = await _latest(
+      stock ? stockMcuRepository : firmwareRepository,
+      prereleases: !stock,
+    );
+    if (release == null) {
+      throw ReleaseFailure(
+        'No ${stock ? 'stock firmware' : 'ChroMagic'} release is available.',
+      );
+    }
+    _releases[stock ? stockMcuRepository : firmwareRepository] = release;
+    return FirmwareRelease({
+      'id': id,
+      'label': '${stock ? 'Stock' : 'ChroMagic'} ${release.tag}',
+      'version': {'chromatic': release.tag},
+      'mcu': <String, String>{},
+      'fpga': <String, String>{},
+    });
+  }
 
   Future<FirmwareBundle> prepare(
     String id,
@@ -38,7 +74,7 @@ class FirmwareReleases {
     progress(const FirmwareProgress('Checking releases...'));
     if (id == 'stock') return _stock(tools, progress);
     if (id != 'chromagician') throw const ReleaseFailure('Unknown firmware.');
-    final release = await client.latest(firmwareRepository, allowCached: true);
+    final release = await _latest(firmwareRepository);
     if (release == null) {
       throw const ReleaseFailure('No ChroMagic release is available yet.');
     }
@@ -104,8 +140,8 @@ class FirmwareReleases {
     void Function(FirmwareProgress) progress,
   ) async {
     final releases = await Future.wait([
-      client.latest(stockMcuRepository, prereleases: false, allowCached: true),
-      client.latest(stockFpgaRepository, prereleases: false, allowCached: true),
+      _latest(stockMcuRepository, prereleases: false),
+      _latest(stockFpgaRepository, prereleases: false),
     ]);
     if (releases.any((r) => r == null)) {
       throw const ReleaseFailure('No stock firmware release is available.');
@@ -142,7 +178,8 @@ class FirmwareReleases {
     final fpgaFile = await client.download(fpga, fpgaAsset);
     return FirmwareBundle(client.cache, tools, [
       FirmwareRelease({
-        'id': 'stock', 'label': 'Stock ${mcu.tag}',
+        'id': 'stock',
+        'label': 'Stock ${mcu.tag}',
         'version': {
           'mcu': mcuVersion,
           'fpga': fpga.tag.replaceFirst(RegExp('^v'), ''),

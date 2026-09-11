@@ -1,7 +1,7 @@
 name: chromatic_pc_backup
 description: "Desktop cartridge tools for Chromatic PC Backup mode"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.12.2

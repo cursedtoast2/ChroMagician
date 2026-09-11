@@ -27,6 +27,12 @@ class FirmwareDialog extends StatefulWidget {
 class _FirmwareDialogState extends State<FirmwareDialog> {
   late final FirmwareInstaller installer =
       widget.installer ?? FirmwareInstaller(widget.controller.backend);
+  late final Future<FirmwareReleases> downloads = widget.releases != null
+      ? Future.value(widget.releases!)
+      : ReleaseUpdates.configured().then(
+          (updates) => FirmwareReleases(updates.client),
+        );
+  final releaseErrors = <String, String>{};
   FirmwareBundle? bundle;
   FirmwareRelease? selected;
   FirmwareProgress? progress;
@@ -34,6 +40,15 @@ class _FirmwareDialogState extends State<FirmwareDialog> {
   bool checking = true;
   bool installing = false;
   bool complete = false;
+
+  bool get selectionReady =>
+      selected != null &&
+      (widget.loadBundle != null || selected!.version.isNotEmpty);
+  bool get resolvingSelection =>
+      !selectionReady &&
+      selected != null &&
+      !releaseErrors.containsKey(selected!.id);
+  String? get displayedError => error ?? releaseErrors[selected?.id];
 
   String? get current {
     final version = widget.controller.firmwareVersion;
@@ -63,10 +78,30 @@ class _FirmwareDialogState extends State<FirmwareDialog> {
           (release) => release.id == 'chromagician',
         );
       });
+      if (widget.loadBundle == null) {
+        for (final release in loaded.releases) {
+          unawaited(describe(release.id));
+        }
+      }
     } on Object catch (failure) {
       if (mounted) setState(() => error = failure.toString());
     } finally {
       if (mounted) setState(() => checking = false);
+    }
+  }
+
+  Future<void> describe(String id) async {
+    try {
+      final release = await (await downloads).describe(id);
+      if (!mounted) return;
+      setState(() {
+        bundle = FirmwareBundle(bundle!.directory, bundle!.tools, [
+          for (final item in bundle!.releases) item.id == id ? release : item,
+        ]);
+        if (selected?.id == id) selected = release;
+      });
+    } on Object catch (failure) {
+      if (mounted) setState(() => releaseErrors[id] = failure.toString());
     }
   }
 
@@ -75,7 +110,7 @@ class _FirmwareDialogState extends State<FirmwareDialog> {
         installing ||
         checking ||
         bundle == null ||
-        selected == null) {
+        !selectionReady) {
       return;
     }
     setState(() {
@@ -93,10 +128,11 @@ class _FirmwareDialogState extends State<FirmwareDialog> {
       var prepared = bundle!;
       var release = selected!;
       if (widget.loadBundle == null) {
-        final downloads =
-            widget.releases ??
-            FirmwareReleases((await ReleaseUpdates.configured()).client);
-        prepared = await downloads.prepare(release.id, prepared.tools, report);
+        prepared = await (await downloads).prepare(
+          release.id,
+          prepared.tools,
+          report,
+        );
         release = prepared.releases.single;
       }
       await installer.install(prepared, release, report);
@@ -187,12 +223,12 @@ class _FirmwareDialogState extends State<FirmwareDialog> {
                     ),
                   ),
                 ],
-                if (checking || progress != null) ...[
+                if (checking || resolvingSelection || progress != null) ...[
                   const SizedBox(height: 22),
                   Text(
-                    checking
+                    checking || resolvingSelection
                         ? 'Checking...'
-                        : error != null
+                        : displayedError != null
                         ? 'Installation needs attention'
                         : complete
                         ? '${selected!.label} installed and verified.'
@@ -200,15 +236,17 @@ class _FirmwareDialogState extends State<FirmwareDialog> {
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                   const SizedBox(height: 10),
-                  if (error == null)
+                  if (displayedError == null)
                     LinearProgressIndicator(
-                      value: checking ? null : progress?.fraction,
+                      value: checking || resolvingSelection
+                          ? null
+                          : progress?.fraction,
                     ),
                 ],
-                if (error != null) ...[
+                if (displayedError != null) ...[
                   const SizedBox(height: 16),
                   SelectableText(
-                    error!,
+                    displayedError!,
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.error,
                     ),
@@ -231,7 +269,8 @@ class _FirmwareDialogState extends State<FirmwareDialog> {
                   widget.controller.port == null ||
                       installing ||
                       checking ||
-                      bundle == null
+                      bundle == null ||
+                      !selectionReady
                   ? null
                   : install,
               child: Text(
