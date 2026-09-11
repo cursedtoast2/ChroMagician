@@ -206,7 +206,7 @@ class LinuxPackageUpdate implements PreparedAppUpdate {
       manager,
       '-y',
       'install',
-      '--',
+      if (format == 'deb') '--',
       package.path,
     ]);
     final output = Future.wait([
