@@ -47,6 +47,11 @@ pub enum SdOperation {
         local: PathBuf,
         remote: String,
     },
+    Import {
+        sources: Vec<PathBuf>,
+        destination: String,
+    },
+    InitializeBackups,
     Backup {
         remote: String,
         save: bool,
@@ -262,6 +267,82 @@ impl<'a> Session<'a> {
         }
         Ok(())
     }
+    fn upload(
+        &mut self,
+        remote: &str,
+        input: &mut (std::fs::File, u32, u32),
+        event: &mut impl FnMut(Value),
+    ) -> Result<(), BackupError> {
+        validate_path(remote)?;
+        let (file, size, crc) = input;
+        let mut payload = vec![7];
+        payload.extend(size.to_le_bytes());
+        payload.extend(crc.to_le_bytes());
+        payload.extend(remote.as_bytes());
+        self.exchange(&payload)?;
+        let mut sent = 0_u32;
+        let mut buffer = [0; 1025];
+        buffer[0] = 8;
+        while sent < *size {
+            let count = usize::try_from((*size - sent).min(1024)).expect("bounded block");
+            file.read_exact(&mut buffer[1..=count])?;
+            self.exchange(&buffer[..=count])?;
+            sent += u32::try_from(count).expect("bounded block");
+            event(json!({"event":"progress", "phase":"sd_write", "completed":sent, "total":size}));
+        }
+        event(json!({"event":"progress", "phase":"verify", "completed":0, "total":size}));
+        self.exchange(&[9])
+    }
+    fn import(
+        &mut self,
+        destination: &str,
+        items: &[ImportItem],
+        timeout: Duration,
+        event: &mut impl FnMut(Value),
+    ) -> Result<(), BackupError> {
+        let existing = self.list(destination)?;
+        for item in items {
+            let (parent, name) = item.remote.rsplit_once('/').expect("validated path");
+            if parent == destination.trim_end_matches('/')
+                && existing
+                    .iter()
+                    .any(|entry| entry.name.to_lowercase() == name.to_lowercase())
+            {
+                return Err(BackupError::Protocol(format!(
+                    "{name} already exists in the destination folder."
+                )));
+            }
+        }
+        let total: u64 = items
+            .iter()
+            .filter_map(|item| item.upload.map(|(size, _)| u64::from(size)))
+            .sum();
+        let mut completed = 0_u64;
+        event(json!({"event":"progress", "phase":"sd_write", "completed":0, "total":total}));
+        for item in items {
+            if let Some((size, crc)) = item.upload {
+                let file = std::fs::File::open(&item.local)?;
+                if file.metadata()?.len() != u64::from(size) {
+                    return Err(BackupError::Protocol(format!(
+                        "{} changed during the import.",
+                        item.local.display()
+                    )));
+                }
+                let mut input = (file, size, crc);
+                self.deadline = Instant::now() + timeout;
+                self.upload(&item.remote, &mut input, &mut |progress| {
+                    if progress["phase"] == "sd_write" {
+                        let sent = progress["completed"].as_u64().expect("upload progress");
+                        event(json!({"event":"progress", "phase":"sd_write", "completed":completed + sent, "total":total}));
+                    }
+                })?;
+                completed += u64::from(size);
+            } else {
+                self.exchange(&path_payload(4, &item.remote)?)?;
+            }
+        }
+        Ok(())
+    }
     fn backup(
         &mut self,
         remote: &str,
@@ -413,6 +494,15 @@ pub(crate) fn status_on_port(port: &mut dyn SerialPort) -> Result<SdStatus, Back
     Ok(present)
 }
 
+#[allow(clippy::missing_errors_doc)]
+pub fn list_sd_on_port(port: &mut dyn SerialPort, path: &str) -> Result<Vec<SdEntry>, BackupError> {
+    validate_path(path)?;
+    let mut session = Session::start(port, Duration::from_secs(30))?;
+    let entries = session.list(path)?;
+    session.finish()?;
+    Ok(entries)
+}
+
 fn path_payload(op: u8, path: &str) -> Result<Vec<u8>, BackupError> {
     validate_path(path)?;
     let mut payload = vec![op];
@@ -458,6 +548,87 @@ fn selection_parent(paths: &[String]) -> Result<&str, BackupError> {
     parent.ok_or_else(|| BackupError::Protocol("Select at least one item.".into()))
 }
 
+struct ImportItem {
+    local: PathBuf,
+    remote: String,
+    upload: Option<(u32, u32)>,
+}
+
+fn import_items(sources: &[PathBuf], destination: &str) -> Result<Vec<ImportItem>, BackupError> {
+    validate_path(destination)?;
+    let mut pending = Vec::new();
+    for local in sources.iter().rev() {
+        let name = local
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                BackupError::Protocol("Choose a file or folder with a valid name.".into())
+            })?;
+        pending.push((
+            local.clone(),
+            format!("{}/{name}", destination.trim_end_matches('/')),
+        ));
+    }
+    let mut items = Vec::new();
+    let mut names = std::collections::HashSet::new();
+    while let Some((local, remote)) = pending.pop() {
+        validate_path(&remote)?;
+        if !names.insert(remote.to_lowercase()) {
+            return Err(BackupError::Protocol(format!(
+                "Duplicate SD name: {remote}"
+            )));
+        }
+        let metadata = std::fs::symlink_metadata(&local)?;
+        let upload = if metadata.is_file() {
+            let (_, size, crc) = open_upload(&local)?;
+            Some((size, crc))
+        } else if metadata.is_dir() {
+            let mut children = std::fs::read_dir(&local)?.collect::<Result<Vec<_>, _>>()?;
+            children.sort_by_key(std::fs::DirEntry::file_name);
+            for child in children.into_iter().rev() {
+                let name = child.file_name().into_string().map_err(|_| {
+                    BackupError::Protocol("A file name cannot be stored on the SD card.".into())
+                })?;
+                pending.push((child.path(), format!("{remote}/{name}")));
+            }
+            None
+        } else {
+            return Err(BackupError::Protocol(format!(
+                "Cannot import a link or special file: {}",
+                local.display()
+            )));
+        };
+        items.push(ImportItem {
+            local,
+            remote,
+            upload,
+        });
+    }
+    if items.is_empty() {
+        return Err(BackupError::Protocol(
+            "Select at least one file or folder.".into(),
+        ));
+    }
+    Ok(items)
+}
+
+fn open_upload(local: &std::path::Path) -> Result<(std::fs::File, u32, u32), BackupError> {
+    let mut file = std::fs::File::open(local)?;
+    let size = u32::try_from(file.metadata()?.len())
+        .map_err(|_| BackupError::Protocol("file exceeds FAT size limit".into()))?;
+    let mut crc = crc32fast::Hasher::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        crc.update(&buffer[..n]);
+    }
+    std::io::Seek::rewind(&mut file)?;
+    Ok((file, size, crc.finalize()))
+}
+
 /// Manage SD files through `ChroMagician` firmware. Existing SD names are preserved.
 /// # Errors
 /// Returns filesystem, transport, or checksum failures; incomplete uploads are removed.
@@ -478,22 +649,18 @@ pub fn sd_files(
         _ => {}
     }
     let mut input = if let SdOperation::Upload { local, .. } = operation {
-        let mut file = std::fs::File::open(local)?;
-        let size = u32::try_from(file.metadata()?.len())
-            .map_err(|_| BackupError::Protocol("file exceeds FAT size limit".into()))?;
-        let mut crc = crc32fast::Hasher::new();
-        let mut buffer = [0; 8192];
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
-            }
-            crc.update(&buffer[..n]);
-        }
-        std::io::Seek::rewind(&mut file)?;
-        Some((file, size, crc.finalize()))
+        Some(open_upload(local)?)
     } else {
         None
+    };
+    let imports = if let SdOperation::Import {
+        sources,
+        destination,
+    } = operation
+    {
+        import_items(sources, destination)?
+    } else {
+        Vec::new()
     };
     event(json!({"event":"session_started", "schema_version":1}));
     let (_, mut port) = open_chromatic(request.port.as_deref(), request.boot_wait)?;
@@ -516,6 +683,13 @@ pub fn sd_files(
             session.exchange(&payload)?;
         }
         SdOperation::Mkdir(path) => session.exchange(&path_payload(4, path)?)?,
+        SdOperation::InitializeBackups => {
+            session.ensure_directory("/CHROMAGIC")?;
+            session.ensure_directory("/CHROMAGIC/BACKUPS")?;
+        }
+        SdOperation::Import { destination, .. } => {
+            session.import(destination, &imports, request.timeout, &mut event)?;
+        }
         SdOperation::Delete(path) => session.exchange(&path_payload(5, path)?)?,
         SdOperation::DeleteTree(path) => session.delete_tree(path)?,
         SdOperation::MoveMany { paths, destination } => session.batch(paths, Some(destination))?,
@@ -545,27 +719,7 @@ pub fn sd_files(
             return Ok(());
         }
         SdOperation::Upload { remote, .. } => {
-            validate_path(remote)?;
-            let (file, size, crc) = input.as_mut().expect("opened upload");
-            let mut payload = vec![7];
-            payload.extend(size.to_le_bytes());
-            payload.extend(crc.to_le_bytes());
-            payload.extend(remote.as_bytes());
-            session.exchange(&payload)?;
-            let mut sent = 0_u32;
-            let mut buffer = [0; 1025];
-            buffer[0] = 8;
-            while sent < *size {
-                let count = usize::try_from((*size - sent).min(1024)).expect("bounded block");
-                file.read_exact(&mut buffer[1..=count])?;
-                session.exchange(&buffer[..=count])?;
-                sent += u32::try_from(count).expect("bounded block");
-                event(
-                    json!({"event":"progress", "phase":"sd_write", "completed":sent, "total":size}),
-                );
-            }
-            event(json!({"event":"progress", "phase":"verify", "completed":0, "total":size}));
-            session.exchange(&[9])?;
+            session.upload(remote, input.as_mut().expect("opened upload"), &mut event)?;
         }
     }
     let changed = match operation {
@@ -577,12 +731,17 @@ pub fn sd_files(
         SdOperation::Upload { remote, .. } | SdOperation::Backup { remote, .. } => Some(remote),
         _ => None,
     };
-    if let Some(path) = changed {
-        let parent =
+    let listing = match operation {
+        SdOperation::InitializeBackups => Some("/CHROMAGIC/BACKUPS"),
+        SdOperation::Import { destination, .. } => Some(destination.as_str()),
+        _ => changed.map(|path| {
             path.rsplit_once('/').map_or(
                 "/",
                 |(parent, _)| if parent.is_empty() { "/" } else { parent },
-            );
+            )
+        }),
+    };
+    if let Some(parent) = listing {
         let entries = session.list(parent)?;
         event(json!({"event":"sd_list", "path":parent, "entries":entries}));
     }

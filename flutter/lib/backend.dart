@@ -49,6 +49,7 @@ abstract class CartBackend {
     '--boot-wait-ms',
     '750',
   ]);
+  Future<BackendEvent>? listSd(String port, String directory) => null;
   Future<void> stopWatching() async {}
 }
 
@@ -56,6 +57,7 @@ class ProcessBackend extends CartBackend {
   ProcessBackend(
     this.executable, {
     this.firmwareInfoTimeout = const Duration(seconds: 15),
+    this.directoryTimeout = const Duration(seconds: 35),
   });
   static const _startFailure = BackendFailure(
     'missing_backend',
@@ -63,8 +65,13 @@ class ProcessBackend extends CartBackend {
   );
   final String executable;
   final Duration firmwareInfoTimeout;
+  final Duration directoryTimeout;
   bool _running = false;
   Future<Process>? _watchLaunch;
+  String? _watchPort;
+  bool _watchSdListing = false;
+  int _directoryId = 0;
+  Completer<BackendEvent>? _directoryReply;
 
   @override
   Stream<BackendEvent> watch(String port) {
@@ -82,6 +89,8 @@ class ProcessBackend extends CartBackend {
       '--json',
     ]);
     _watchLaunch = launch;
+    _watchPort = port;
+    _watchSdListing = false;
     return _watchEvents(launch);
   }
 
@@ -103,6 +112,27 @@ class ProcessBackend extends CartBackend {
             'protocol_error',
             'Unsupported discovery protocol.',
           );
+        }
+        if (event['event'] == 'session_started') {
+          _watchSdListing = event['sd_listing'] == true;
+        }
+        if (event['event'] == 'sd_list' || event['event'] == 'sd_list_error') {
+          final reply = _directoryReply;
+          if (event['id'] == _directoryId &&
+              reply != null &&
+              !reply.isCompleted) {
+            if (event['event'] == 'sd_list_error') {
+              reply.completeError(
+                BackendFailure(
+                  event['code'] as String,
+                  event['message'] as String,
+                ),
+              );
+            } else {
+              reply.complete(event);
+            }
+          }
+          continue;
         }
         if (event['event'] == 'error') {
           failure = BackendFailure(
@@ -129,6 +159,10 @@ class ProcessBackend extends CartBackend {
     } on ProcessException {
       throw _startFailure;
     } finally {
+      if (identical(_watchLaunch, launch)) {
+        _failDirectoryRequest();
+        _watchSdListing = false;
+      }
       if (process != null) {
         await process.stdin.close();
         await process.exitCode;
@@ -137,16 +171,94 @@ class ProcessBackend extends CartBackend {
     }
   }
 
+  void _failDirectoryRequest() {
+    final reply = _directoryReply;
+    if (reply != null && !reply.isCompleted) {
+      reply.completeError(
+        const BackendFailure(
+          'sd_listing',
+          'The connection closed before the folder could be read.',
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<BackendEvent>? listSd(String port, String directory) {
+    final launch = _watchLaunch;
+    if (_running || launch == null || _watchPort != port || !_watchSdListing) {
+      return null;
+    }
+    if (_directoryReply != null) {
+      return Future.error(
+        const BackendFailure('busy', 'A folder is already loading.'),
+      );
+    }
+    final reply = Completer<BackendEvent>();
+    final id = ++_directoryId;
+    _directoryReply = reply;
+    final result = reply.future
+        .timeout(
+          directoryTimeout,
+          onTimeout: () {
+            _watchSdListing = false;
+            unawaited(
+              launch.then((process) {
+                process.kill();
+              }),
+            );
+            throw const BackendFailure(
+              'sd_listing',
+              'The SD card did not respond.',
+            );
+          },
+        )
+        .then((event) {
+          if (event['path'] != directory) {
+            throw const BackendFailure(
+              'protocol_error',
+              'The SD folder response did not match the request.',
+            );
+          }
+          return event;
+        })
+        .whenComplete(() {
+          if (identical(_directoryReply, reply)) _directoryReply = null;
+        });
+    unawaited(_sendDirectoryRequest(launch, id, directory, reply));
+    return result;
+  }
+
+  Future<void> _sendDirectoryRequest(
+    Future<Process> launch,
+    int id,
+    String directory,
+    Completer<BackendEvent> reply,
+  ) async {
+    try {
+      final process = await launch;
+      if (!identical(_watchLaunch, launch) || !_watchSdListing) {
+        _failDirectoryRequest();
+        return;
+      }
+      process.stdin.writeln(jsonEncode({'id': id, 'path': directory}));
+      await process.stdin.flush();
+    } on Object catch (error) {
+      if (!reply.isCompleted) reply.completeError(error);
+    }
+  }
+
   @override
   Future<void> stopWatching() async {
     final launch = _watchLaunch;
     if (launch == null) return;
+    _watchSdListing = false;
+    _failDirectoryRequest();
     try {
       final process = await launch;
       await process.stdin.close();
       await process.exitCode;
-    } on ProcessException {
-    }
+    } on ProcessException {}
   }
 
   static String resolveExecutable() {

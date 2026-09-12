@@ -368,7 +368,7 @@ class CartController extends ChangeNotifier {
     bool current() =>
         !_disposed && generation == _watchGeneration && port == selectedPort;
     void ready() {
-      busy = inspecting = false;
+      if (inspecting) busy = inspecting = false;
       if (!first.isCompleted) first.complete();
       _notify();
     }
@@ -516,6 +516,8 @@ class CartController extends ChangeNotifier {
   }) async {
     if (busy || firmwareOpen || port == null || !sdPresent) return;
     final selectedPort = port!;
+    final generation = sdGeneration;
+    var sharedListing = false;
     busy = true;
     sdLoading = listing;
     if (!listing) {
@@ -529,18 +531,27 @@ class CartController extends ChangeNotifier {
     error = null;
     _notify();
     try {
-      await _stopWatching();
+      final response = listing && _watch != null
+          ? backend.listSd(selectedPort, arguments[1])
+          : null;
+      sharedListing = response != null;
+      if (!sharedListing) await _stopWatching();
       if (_disposed || port != selectedPort) return;
-      await for (final event in backend.run([
-        ...arguments,
-        '--port',
-        selectedPort,
-        '--boot-wait-ms',
-        '750',
-        '--timeout',
-        '1800',
-      ])) {
-        if (port != selectedPort) continue;
+      final events = response != null
+          ? Stream.fromFuture(response)
+          : backend.run([
+              ...arguments,
+              '--port',
+              selectedPort,
+              '--boot-wait-ms',
+              '750',
+              '--timeout',
+              '1800',
+            ]);
+      await for (final event in events) {
+        if (port != selectedPort || (listing && generation != sdGeneration)) {
+          continue;
+        }
         if (event['event'] == 'sd_list') {
           final entries = (event['entries'] as List)
               .map((entry) => Map<String, dynamic>.from(entry as Map))
@@ -569,7 +580,7 @@ class CartController extends ChangeNotifier {
       busy = sdLoading = false;
       _notify();
     }
-    if (_automatic && !_disposed && port != null) {
+    if (!sharedListing && _automatic && !_disposed && port != null) {
       await inspect(keepTransferResult: true);
     }
   }

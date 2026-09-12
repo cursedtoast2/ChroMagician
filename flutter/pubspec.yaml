@@ -1,7 +1,7 @@
 name: chromatic_pc_backup
 description: "Desktop cartridge tools for Chromatic PC Backup mode"
 publish_to: 'none'
-version: 1.0.2+3
+version: 1.0.3+4
 
 environment:
   sdk: ^3.12.2
@@ -9,6 +9,7 @@ environment:
 dependencies:
   archive: ^4.2.0
   crypto: ^3.0.7
+  desktop_drop: ^0.8.4
   ffi: ^2.2.0
   file_selector: ^1.1.0
   flutter:

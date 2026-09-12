@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -87,6 +88,8 @@ class Workspace extends StatefulWidget {
 class _WorkspaceState extends State<Workspace> {
   CartController get c => widget.controller;
   bool _picking = false;
+  bool _sdDropHover = false;
+  String? _sdDragContext;
   final _sdSelection = <String>{};
   String? _sdSelectionContext;
 
@@ -505,8 +508,9 @@ class _WorkspaceState extends State<Workspace> {
     try {
       switch (action) {
         case 'upload':
-          final file = await openFile(confirmButtonText: 'Copy to SD card');
-          if (file != null) {
+          final files = await openFiles(confirmButtonText: 'Copy to SD card');
+          if (files.length == 1) {
+            final file = files.single;
             var name = p.basename(file.path);
             if (c.sdEntries.any(
               (entry) =>
@@ -523,7 +527,23 @@ class _WorkspaceState extends State<Workspace> {
               '--file',
               file.path,
             ];
+          } else if (files.isNotEmpty) {
+            arguments = [
+              '--sd-import',
+              ...files.map((file) => file.path),
+              '--destination',
+              directory,
+            ];
           }
+        case 'upload-folder':
+          final folder = await getDirectoryPath(
+            confirmButtonText: 'Copy folder to SD',
+          );
+          if (folder != null) {
+            arguments = ['--sd-import', folder, '--destination', directory];
+          }
+        case 'initialize':
+          arguments = ['--sd-initialize'];
         case 'download':
           final target = await getSaveLocation(
             suggestedName: entry!['name'] as String,
@@ -682,12 +702,52 @@ class _WorkspaceState extends State<Workspace> {
     }
   }
 
+  String get _sdContext => '${c.port}:${c.sdGeneration}:${c.sdDirectory}';
+
+  bool get _sdDropEnabled =>
+      c.showingSd &&
+      c.sdPresent &&
+      c.port != null &&
+      !c.busy &&
+      !c.firmwareOpen &&
+      !_picking &&
+      ModalRoute.of(context)?.isCurrent == true;
+
+  Future<void> sdDrop(DropDoneDetails details, String scope) async {
+    final dragContext = _sdDragContext;
+    _sdDragContext = null;
+    if (!mounted ||
+        !_sdDropEnabled ||
+        scope != _sdContext ||
+        (dragContext != null && dragContext != scope) ||
+        details.files.isEmpty) {
+      return;
+    }
+    setState(() {
+      _sdDropHover = false;
+      _picking = true;
+    });
+    try {
+      await c.sdCommand([
+        '--sd-import',
+        ...details.files.map((file) => file.path),
+        '--destination',
+        c.sdDirectory,
+      ]);
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
   Widget sdWorkspace() {
-    final scope = '${c.port}:${c.sdGeneration}:${c.sdDirectory}';
+    final scope = _sdContext;
+    final dropEnabled = _sdDropEnabled;
     if (_sdSelectionContext != scope) {
       _sdSelection.clear();
       _sdSelectionContext = scope;
+      _sdDropHover = false;
     }
+    if (!dropEnabled) _sdDropHover = false;
     _sdSelection.removeWhere(
       (name) => !c.sdEntries.any((entry) => entry['name'] == name),
     );
@@ -707,16 +767,28 @@ class _WorkspaceState extends State<Workspace> {
                 label: const Text('Copy to SD card'),
               ),
               OutlinedButton.icon(
+                onPressed: c.busy || _picking
+                    ? null
+                    : () => sdAction('upload-folder'),
+                icon: const Icon(Icons.drive_folder_upload_outlined, size: 18),
+                label: const Text('Copy folder to SD'),
+              ),
+              OutlinedButton.icon(
                 onPressed: c.busy || _picking ? null : () => sdAction('mkdir'),
                 icon: const Icon(Icons.create_new_folder_outlined, size: 18),
                 label: const Text('New folder'),
               ),
-              IconButton(
-                tooltip: 'Refresh',
-                onPressed: c.busy || _picking
-                    ? null
-                    : () => c.listSd(c.sdDirectory),
-                icon: const Icon(Icons.refresh_rounded),
+              Tooltip(
+                message:
+                    'Creates the CHROMAGIC/BACKUPS folder on the card, where '
+                    'the BACKUPS tab looks for games. Use it on a fresh card.',
+                child: OutlinedButton.icon(
+                  onPressed: c.busy || _picking
+                      ? null
+                      : () => sdAction('initialize'),
+                  icon: const Icon(Icons.folder_special_outlined, size: 18),
+                  label: const Text('Initialize backups'),
+                ),
               ),
               if (_sdSelection.isNotEmpty) ...[
                 OutlinedButton.icon(
@@ -790,106 +862,118 @@ class _WorkspaceState extends State<Workspace> {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: Container(
-              decoration: BoxDecoration(
-                color: ink.withValues(alpha: 0.45),
-                border: Border.all(color: stroke),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: c.sdEntries.isEmpty
-                  ? Center(
-                      child: Text(
-                        c.sdLoading ? 'Loading' : 'This folder is empty',
-                        style: const TextStyle(fontSize: 16, color: muted),
-                      ),
-                    )
-                  : ListView.separated(
-                      itemCount: c.sdEntries.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final entry = c.sdEntries[index];
-                        final name = entry['name'] as String;
-                        final folder = entry['directory'] == true;
-                        return Material(
-                          color: Colors.transparent,
-                          child: ListTile(
-                            selected: _sdSelection.contains(name),
-                            selectedTileColor: lime.withValues(alpha: 0.07),
-                            leading: Checkbox(
-                              key: ValueKey('sd-select-$name'),
-                              semanticLabel: 'Select $name',
-                              value: _sdSelection.contains(name),
-                              onChanged: c.busy || _picking
-                                  ? null
-                                  : (selected) => setState(() {
-                                      if (selected == true) {
-                                        _sdSelection.add(name);
-                                      } else {
-                                        _sdSelection.remove(name);
-                                      }
-                                    }),
-                            ),
-                            title: Text(entry['name'] as String),
-                            subtitle: folder
-                                ? null
-                                : Text(
-                                    formatBytes(entry['size'] as int),
-                                    style: const TextStyle(
-                                      color: muted,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                            onTap: !c.busy && !_picking
-                                ? () {
-                                    if (folder) {
-                                      c.listSd(c.sdPath(name));
-                                    } else {
-                                      setState(() {
-                                        if (!_sdSelection.remove(name)) {
+            child: DropTarget(
+              key: ValueKey('sd-drop-$scope'),
+              enable: dropEnabled,
+              onDragEntered: (_) {
+                _sdDragContext = scope;
+                setState(() => _sdDropHover = true);
+              },
+              onDragExited: (_) {
+                if (_sdDropHover) setState(() => _sdDropHover = false);
+              },
+              onDragDone: (details) => sdDrop(details, scope),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: ink.withValues(alpha: 0.45),
+                  border: Border.all(color: _sdDropHover ? lime : stroke),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: c.sdEntries.isEmpty
+                    ? Center(
+                        child: Text(
+                          c.sdLoading ? 'Loading' : 'This folder is empty',
+                          style: const TextStyle(fontSize: 16, color: muted),
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: c.sdEntries.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (context, index) {
+                          final entry = c.sdEntries[index];
+                          final name = entry['name'] as String;
+                          final folder = entry['directory'] == true;
+                          return Material(
+                            color: Colors.transparent,
+                            child: ListTile(
+                              selected: _sdSelection.contains(name),
+                              selectedTileColor: lime.withValues(alpha: 0.07),
+                              leading: Checkbox(
+                                key: ValueKey('sd-select-$name'),
+                                semanticLabel: 'Select $name',
+                                value: _sdSelection.contains(name),
+                                onChanged: c.busy || _picking
+                                    ? null
+                                    : (selected) => setState(() {
+                                        if (selected == true) {
                                           _sdSelection.add(name);
+                                        } else {
+                                          _sdSelection.remove(name);
                                         }
-                                      });
+                                      }),
+                              ),
+                              title: Text(entry['name'] as String),
+                              subtitle: folder
+                                  ? null
+                                  : Text(
+                                      formatBytes(entry['size'] as int),
+                                      style: const TextStyle(
+                                        color: muted,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                              onTap: !c.busy && !_picking
+                                  ? () {
+                                      if (folder) {
+                                        c.listSd(c.sdPath(name));
+                                      } else {
+                                        setState(() {
+                                          if (!_sdSelection.remove(name)) {
+                                            _sdSelection.add(name);
+                                          }
+                                        });
+                                      }
                                     }
-                                  }
-                                : null,
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (folder)
-                                  const Icon(
-                                    Icons.chevron_right_rounded,
-                                    color: muted,
-                                  ),
-                                if (!folder)
-                                  IconButton(
-                                    tooltip: 'Copy to PC',
-                                    onPressed: c.busy || _picking
-                                        ? null
-                                        : () => sdAction('download', entry),
-                                    icon: const Icon(Icons.download_rounded),
-                                  ),
-                                PopupMenuButton<String>(
-                                  enabled: !c.busy && !_picking,
-                                  onSelected: (action) =>
-                                      sdAction(action, entry),
-                                  itemBuilder: (_) => const [
-                                    PopupMenuItem(
-                                      value: 'rename',
-                                      child: Text('Rename'),
+                                  : null,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (folder)
+                                    const Icon(
+                                      Icons.chevron_right_rounded,
+                                      color: muted,
                                     ),
-                                    PopupMenuItem(
-                                      value: 'delete',
-                                      child: Text('Delete'),
+                                  if (!folder)
+                                    IconButton(
+                                      tooltip: 'Copy to PC',
+                                      onPressed: c.busy || _picking
+                                          ? null
+                                          : () => sdAction('download', entry),
+                                      icon: const Icon(Icons.download_rounded),
                                     ),
-                                  ],
-                                ),
-                              ],
+                                  PopupMenuButton<String>(
+                                    enabled: !c.busy && !_picking,
+                                    onSelected: (action) =>
+                                        sdAction(action, entry),
+                                    itemBuilder: (_) => const [
+                                      PopupMenuItem(
+                                        value: 'rename',
+                                        child: Text('Rename'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'delete',
+                                        child: Text('Delete'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
+              ),
             ),
           ),
           if (c.error != null) ...[const SizedBox(height: 12), errorCard()],

@@ -409,6 +409,7 @@ fn watch_connection(
         event,
         |_| Ok(()),
         |_| Ok((true, false)),
+        |_| Ok(()),
     )
 }
 
@@ -421,6 +422,7 @@ pub fn watch_device(
     event: impl FnMut(Option<InspectedCartridge>),
     sd_event: impl FnMut(crate::SdStatus),
     status_event: impl FnMut(crate::DeviceStatus),
+    requests: impl FnMut(&mut dyn SerialPort) -> Result<(), BackupError>,
 ) -> Result<(), BackupError> {
     let (_, port) = open_chromatic(request.port.as_deref(), request.boot_wait)?;
     let connection = Connection {
@@ -429,7 +431,7 @@ pub fn watch_device(
         deadline: Instant::now(),
         healthy: false,
     };
-    watch_device_connection(connection, stopped, event, sd_event, status_event)
+    watch_device_connection(connection, stopped, event, sd_event, status_event, requests)
 }
 
 fn watch_device_connection(
@@ -438,6 +440,7 @@ fn watch_device_connection(
     event: impl FnMut(Option<InspectedCartridge>),
     mut sd_event: impl FnMut(crate::SdStatus),
     mut status_event: impl FnMut(crate::DeviceStatus),
+    requests: impl FnMut(&mut dyn SerialPort) -> Result<(), BackupError>,
 ) -> Result<(), BackupError> {
     let mut next = Instant::now();
     let mut previous = None;
@@ -488,6 +491,7 @@ fn watch_device_connection(
                 status.enabled == Some(true),
             ))
         },
+        requests,
     )
 }
 
@@ -497,9 +501,14 @@ fn watch_connection_with_sd(
     mut event: impl FnMut(Option<InspectedCartridge>),
     mut sample_sd: impl FnMut(&mut dyn SerialPort) -> Result<(), BackupError>,
     mut sample_status: impl FnMut(&mut dyn SerialPort) -> Result<(bool, bool), BackupError>,
+    mut requests: impl FnMut(&mut dyn SerialPort) -> Result<(), BackupError>,
 ) -> Result<(), BackupError> {
     let mut previous: Option<Option<InspectedCartridge>> = None;
     while !stopped() {
+        requests(&mut *connection.port)?;
+        if stopped() {
+            return Ok(());
+        }
         let (read_cart, read_sd) = sample_status(&mut *connection.port)?;
         let sample = if read_cart {
             connection
@@ -552,6 +561,7 @@ fn watch_connection_with_sd(
             if stopped() {
                 return Ok(());
             }
+            requests(&mut *connection.port)?;
             std::thread::sleep(Duration::from_millis(25));
         }
     }
@@ -881,6 +891,7 @@ mod tests {
                 confirmed.set(status.enabled == Some(false));
                 modes.push(status.enabled);
             },
+            |_| Ok(()),
         )
         .unwrap();
         peer.join().unwrap();
@@ -929,6 +940,7 @@ mod tests {
                 enabled.set(status.enabled == Some(true));
                 modes.push(status);
             },
+            |_| Ok(()),
         )
         .unwrap();
         peer.join().unwrap();
@@ -1001,6 +1013,7 @@ mod tests {
                 count.set(count.get() + 1);
             },
             |status| modes.push(status.enabled),
+            |_| Ok(()),
         )
         .unwrap();
         peer.join().unwrap();

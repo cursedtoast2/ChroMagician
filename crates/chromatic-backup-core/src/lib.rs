@@ -4,7 +4,7 @@ mod firmware;
 mod flash;
 pub use firmware::{DeviceStatus, FirmwareInfo, firmware_info, firmware_info_after_flash};
 mod sd;
-pub use sd::{SdEntry, SdOperation, SdStatus, sd_files};
+pub use sd::{SdEntry, SdOperation, SdStatus, list_sd_on_port, sd_files};
 mod protocol;
 mod rom;
 

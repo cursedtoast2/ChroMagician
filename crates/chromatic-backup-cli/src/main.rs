@@ -1,17 +1,18 @@
-use std::io::{self, Write as _};
+use std::io::{self, BufRead as _, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+    mpsc,
 };
 use std::time::Duration;
 
 use chromatic_backup_core::{
     ArtifactKind, BackupError, BackupEvent, BackupRequest, FirmwareInfo, RomWriteEvent,
     RomWriteRequest, SaveImportEvent, SaveImportRequest, SdOperation, backup, discover_ports,
-    firmware_info, firmware_info_after_flash, import_save, inspect_cartridge, probe_flash,
-    sd_files, watch_device, write_rom,
+    firmware_info, firmware_info_after_flash, import_save, inspect_cartridge, list_sd_on_port,
+    probe_flash, sd_files, watch_device, write_rom,
 };
 use clap::Parser;
 use serde_json::json;
@@ -22,7 +23,7 @@ use serde_json::json;
     version,
     about = "Read and write GB/GBC cartridges through a ModRetro Chromatic",
     group(clap::ArgGroup::new("write").args(["write_rom", "import_sav"])),
-    group(clap::ArgGroup::new("sd_destination").args(["sd_rename", "sd_move"])),
+    group(clap::ArgGroup::new("sd_destination").args(["sd_rename", "sd_move", "sd_import"])),
     group(clap::ArgGroup::new("sd").multiple(false).conflicts_with_all(["devices", "watch", "inspect", "rom", "sav", "write_rom", "import_sav", "probe_flash"]))
 )]
 struct Arguments {
@@ -44,6 +45,10 @@ struct Arguments {
     sd_get: Option<String>,
     #[arg(long, value_name = "SD_PATH", group = "sd", requires = "file")]
     sd_put: Option<String>,
+    #[arg(long, num_args = 1.., value_name = "LOCAL_PATH", group = "sd", requires = "destination")]
+    sd_import: Vec<PathBuf>,
+    #[arg(long, group = "sd")]
+    sd_initialize: bool,
     #[arg(long, value_name = "SD_PATH", group = "sd", requires = "destination")]
     sd_rename: Option<String>,
     /// Move selected files or folders into one SD directory.
@@ -132,7 +137,14 @@ struct Arguments {
 }
 
 fn sd_operation(arguments: &Arguments) -> Option<SdOperation> {
-    if !arguments.sd_move.is_empty() {
+    if arguments.sd_initialize {
+        Some(SdOperation::InitializeBackups)
+    } else if !arguments.sd_import.is_empty() {
+        Some(SdOperation::Import {
+            sources: arguments.sd_import.clone(),
+            destination: arguments.destination.clone().expect("clap destination"),
+        })
+    } else if !arguments.sd_move.is_empty() {
         Some(SdOperation::MoveMany {
             paths: arguments.sd_move.clone(),
             destination: arguments.destination.clone().expect("clap destination"),
@@ -295,20 +307,43 @@ fn main() -> ExitCode {
     run_transfer(arguments)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectoryRequest {
+    id: u64,
+    path: String,
+}
+
+fn directory_requests(stopped: Arc<AtomicBool>) -> mpsc::Receiver<DirectoryRequest> {
+    let (sender, requests) = mpsc::sync_channel::<DirectoryRequest>(1);
+    std::thread::spawn(move || {
+        for line in io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            let Ok(request) = serde_json::from_str(&line) else {
+                break;
+            };
+            if sender.send(request).is_err() {
+                break;
+            }
+        }
+        stopped.store(true, Ordering::Relaxed);
+    });
+    requests
+}
+
 fn run_watch(arguments: Arguments) -> ExitCode {
     let stopped = Arc::new(AtomicBool::new(false));
-    let reader_stopped = Arc::clone(&stopped);
-    std::thread::spawn(move || {
-        let _ = io::stdin().read_line(&mut String::new());
-        reader_stopped.store(true, Ordering::Relaxed);
-    });
+    let requests = directory_requests(Arc::clone(&stopped));
     let request = RomWriteRequest {
         port: arguments.port,
         boot_wait: Duration::from_millis(arguments.boot_wait_ms),
         ..RomWriteRequest::default()
     };
     if arguments.json {
-        println!("{}", json!({"event":"session_started", "schema_version":1}));
+        println!(
+            "{}",
+            json!({"event":"session_started", "schema_version":1, "sd_listing":true})
+        );
         let _ = io::stdout().flush();
     }
     let result = watch_device(
@@ -354,6 +389,25 @@ fn run_watch(arguments: Arguments) -> ExitCode {
                 );
             }
             let _ = io::stdout().flush();
+        },
+        |port| {
+            if let Ok(request) = requests.try_recv() {
+                let result = list_sd_on_port(port, &request.path);
+                let response = match &result {
+                    Ok(entries) => json!({"event":"sd_list", "id":request.id,
+                        "path":request.path, "entries":entries}),
+                    Err(error) => json!({"event":"sd_list_error", "id":request.id,
+                        "code":error.code(), "message":error.to_string()}),
+                };
+                println!("{response}");
+                let _ = io::stdout().flush();
+                if let Err(error) = result
+                    && !matches!(error, BackupError::Device(_))
+                {
+                    return Err(error);
+                }
+            }
+            Ok(())
         },
     );
     match result {
