@@ -297,6 +297,8 @@ pub fn discover_ports() -> Result<Vec<String>, BackupError> {
             }
             _ => None,
         })
+        // macOS lists each device as both /dev/cu.* and /dev/tty.*; keep only cu.*
+        .filter(|name| !cfg!(target_os = "macos") || !name.starts_with("/dev/tty."))
         .collect::<Vec<_>>();
     matches.sort();
     Ok(matches)
